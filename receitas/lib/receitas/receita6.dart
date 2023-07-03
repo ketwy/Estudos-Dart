@@ -1,10 +1,64 @@
 import 'package:flutter/material.dart';
+
 import 'package:flutter_hooks/flutter_hooks.dart';
 
-class DataService{
-  final ValueNotifier<List> tableStateNotifier = new ValueNotifier([]);
-  void carregar(index) {
-    if (index == 1) carregarCervejas();
+// Interface Observer
+abstract class Observer {
+  void update(List data);
+}
+
+// Observador Concreto
+class TableObserver implements Observer {
+  final Function(List) updateCallback;
+
+  TableObserver(this.updateCallback);
+
+  @override
+  void update(List data) {
+    updateCallback(data);
+  }
+}
+
+// Classe DataService (Sujeito)
+class DataService {
+  final ValueNotifier<List> tableStateNotifier;
+  final ValueNotifier<List<String>> columnNamesNotifier;
+  final ValueNotifier<List<String>> propertyNamesNotifier;
+  final List<Observer> observers;
+
+  DataService()
+      : tableStateNotifier = ValueNotifier([
+          {"name": "La Fin Du Monde", "style": "Bock", "ibu": "65"},
+          {"name": "Sapporo Premiume", "style": "Sour Ale", "ibu": "54"},
+          {"name": "Duvel", "style": "Pilsner", "ibu": "82"}
+        ]),
+        columnNamesNotifier = ValueNotifier(["Nome", "Estilo", "IBU"]),
+        propertyNamesNotifier = ValueNotifier(["name", "style", "ibu"]),
+        observers = [];
+
+  void attachObserver(Observer observer) {
+    observers.add(observer);
+  }
+
+  void detachObserver(Observer observer) {
+    observers.remove(observer);
+  }
+
+  void notifyObservers() {
+    final data = tableStateNotifier.value;
+    for (final observer in observers) {
+      observer.update(data);
+    }
+  }
+
+  void carregar(int index) {
+    final List<Function> functions = [
+      carregarCafes,
+      carregarCervejas,
+      carregarNacoes,
+    ];
+    functions[index]();
+    notifyObservers();
   }
 
   void carregarCervejas() {
@@ -13,16 +67,36 @@ class DataService{
       {"name": "Sapporo Premiume", "style": "Sour Ale", "ibu": "54"},
       {"name": "Duvel", "style": "Pilsner", "ibu": "82"}
     ];
+    columnNamesNotifier.value = ["Nome", "Estilo", "IBU"];
+    propertyNamesNotifier.value = ["name", "style", "ibu"];
+  }
+
+  void carregarCafes() {
+    tableStateNotifier.value = [
+      {"name": "Blend", "quality": "Ótimo", "note": "10"},
+      {"name": "Expresso", "quality": "razoavel", "note": "7"},
+      {"name": "Seridó", "quality": "ruim", "note": "2"}
+    ];
+    columnNamesNotifier.value = ["Nome", "Qualidade", "Nota Pessoal"];
+    propertyNamesNotifier.value = ["name", "quality", "note"];
+  }
+
+  void carregarNacoes() {
+    tableStateNotifier.value = [
+      {"name": "Brasil", "style": "Samba", "ping": "10"},
+      {"name": "EUA", "style": "Rock", "ping": "3"},
+      {"name": "Nova Zelandia", "style": "blues", "ping": "8"}
+    ];
+    columnNamesNotifier.value = ["Nome", "Estilo Musical", "Nota da Pinga"];
+    propertyNamesNotifier.value = ["name", "style", "ping"];
   }
 }
 
 final dataService = DataService();
 
-
-//var dataObjects = [];
-
 void main() {
   MyApp app = MyApp();
+
   runApp(app);
 }
 
@@ -40,31 +114,40 @@ class MyApp extends StatelessWidget {
               valueListenable: dataService.tableStateNotifier,
               builder: (_, value, __) {
                 return DataTableWidget(
-                    jsonObjects: value,
-                    propertyNames: ["name", "style", "ibu"],
-                    columnNames: ["Nome", "Estilo", "IBU"]);
+                  jsonObjects: value,
+                );
               }),
-          bottomNavigationBar: NewNavBar(dataService.carregar),
+          bottomNavigationBar:
+              NewNavBar(itemSelectedCallback: dataService.carregar),
         ));
   }
 }
 
 class NewNavBar extends HookWidget {
+  final Function(int) itemSelectedCallback;
 
-  var itemSelectedCallback;
-
-  NewNavBar({this.itemSelectedCallback}){
-    itemSelectedCallback ??= (_) {} ;
-  }
+  NewNavBar({required this.itemSelectedCallback});
 
   @override
   Widget build(BuildContext context) {
     var state = useState(1);
+
+    useEffect(() {
+      final observer = TableObserver((data) {
+        state.value = 0; // Reset selected index when data changes
+      });
+      dataService.attachObserver(observer);
+
+      return () {
+        dataService.detachObserver(observer);
+      };
+    }, []);
+
     return BottomNavigationBar(
         onTap: (index) {
           state.value = index;
+
           itemSelectedCallback(index);
-          //carregarCervejas();
         },
         currentIndex: state.value,
         items: const [
@@ -82,28 +165,26 @@ class NewNavBar extends HookWidget {
 
 class DataTableWidget extends StatelessWidget {
   final List jsonObjects;
-  final List<String> columnNames;
-  final List<String> propertyNames;
 
-  DataTableWidget(
-      {this.jsonObjects = const [],
-      this.columnNames = const ["Nome", "Estilo", "IBU"],
-      this.propertyNames = const ["name", "style", "ibu"]});
+  DataTableWidget({required this.jsonObjects});
 
   @override
   Widget build(BuildContext context) {
+    final columnNames = dataService.columnNamesNotifier.value;
+    final propertyNames = dataService.propertyNamesNotifier.value;
     return DataTable(
-        columns: columnNames
-            .map((name) => DataColumn(
-                label: Expanded(
-                    child: Text(name,
-                        style: TextStyle(fontStyle: FontStyle.italic)))))
-            .toList(),
-        rows: jsonObjects
-            .map((obj) => DataRow(
-                cells: propertyNames
-                    .map((propName) => DataCell(Text(obj[propName])))
-                    .toList()))
-            .toList());
+      columns: columnNames
+          .map((name) => DataColumn(
+              label: Expanded(
+                  child: Text(name,
+                      style: const TextStyle(fontStyle: FontStyle.italic)))))
+          .toList(),
+      rows: jsonObjects
+          .map((obj) => DataRow(
+              cells: propertyNames
+                  .map((propName) => DataCell(Text(obj[propName])))
+                  .toList()))
+          .toList(),
+    );
   }
 }
